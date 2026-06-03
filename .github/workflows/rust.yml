@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "master" ]
     tags:
-      - 'v*' # 当推送形如 v1.0.0 的标签时触发发布
+      - 'v*' # 只有在推送形如 v1.0.0 的标签时才会触发自动化打包发布
   pull_request:
     branches: [ "master" ]
 
@@ -20,34 +20,42 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_name: clock
+            artifact_name: rust_clock
             asset_name: RustClock-linux-amd64
           - os: windows-latest
-            artifact_name: clock.exe
+            artifact_name: rust_clock.exe
             asset_name: RustClock-windows-amd64.exe
           - os: macos-latest
-            artifact_name: clock
+            artifact_name: rust_clock
             asset_name: RustClock-macOS-universal
 
     permissions:
-      contents: write # 赋予创建 Release 和上传文件的写权限
+      contents: write # 必须显式声明写权限，用于创建 Release 和上传附件
 
     steps:
     - uses: actions/checkout@v4
 
-    # ========== ✨ 核心修复：如果是 Linux 环境，必须安装图形底层依赖，彻底解决 glib-sys 报错 ==========
+    # ========== ✨ 精准补齐：针对 egui(eframe) 和 rodio(音频) 在 Linux 上的所有依赖 ==========
     - name: Install Linux Dependencies
       if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libglib2.0-dev libgtk-3-dev libgtk-4-dev libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libfixposix-dev libxrandr-dev libpango1.0-dev libatk1.0-dev libgdk-pixbuf2.0-dev
-    # ==========================================================================================
+        sudo apt-get install -y \
+          libglib2.0-dev \
+          libgtk-3-dev \
+          libx11-dev \
+          libxcb-shape0-dev \
+          libxcb-xfixes0-dev \
+          libxkbcommon-dev \
+          libasound2-dev \
+          pkg-config
+    # ====================================================================================
 
-    # 1. 安装 Rust 工具链
+    # 1. 设置 Rust 环境
     - name: Install Rust Toolchain
       uses: dtolnay/rust-toolchain@stable
 
-    # 2. 启用智能缓存，加速编译
+    # 2. 启用缓存，大幅提升后续编译速度
     - name: Rust Cache
       uses: Swatinem/rust-cache@v2
       with:
@@ -57,28 +65,29 @@ jobs:
     - name: Run Tests
       run: cargo test --verbose
 
-    # 4. 编译 Release 版本
+    # 4. 执行全平台 Release 编译
     - name: Build Release
       run: cargo build --release --verbose
 
-    # 5. 重命名二进制文件（收集编译成果）
-    - name: Rename Artifact
+    # 5. 整理并重命名生成的二进制包
+    - name: Rename and Package Artifact
       shell: bash
       run: |
         mkdir -p dist
-        # 考虑到不同 GUI 框架生成的包名可能大小写不同，请确保 target/release/ 下的文件名正确
+        
+        # 寻找并拷贝生成的二进制程序
         if [ -f "target/release/${{ matrix.artifact_name }}" ]; then
           cp "target/release/${{ matrix.artifact_name }}" "dist/${{ matrix.asset_name }}"
-        elif [ -f "target/release/rustclock" ]; then
-          cp "target/release/rustclock" "dist/${{ matrix.asset_name }}"
-        elif [ -f "target/release/rustclock.exe" ]; then
-          cp "target/release/rustclock.exe" "dist/${{ matrix.asset_name }}"
+        elif [ -f "target/release/rust-clock" ]; then
+          cp "target/release/rust-clock" "dist/${{ matrix.asset_name }}"
+        elif [ -f "target/release/rust-clock.exe" ]; then
+          cp "target/release/rust-clock.exe" "dist/${{ matrix.asset_name }}"
         else
-          # 保底方案：如果实在找不到，尝试拷贝 target/release 下最新的可执行文件
+          # 保底：若因为 Cargo.toml 中的配置无法匹配名字，则提取最新生成的可执行程序
           find target/release -maxdepth 1 -type f -executable -exec cp {} dist/${{ matrix.asset_name }} \; 2>/dev/null || true
         fi
 
-    # 6. 自动发布到 GitHub Release（只有推送 v* 标签时才会真正执行上传）
+    # 6. 自动发布到 GitHub 并在 Release 页面生成对应的下载附件
     - name: Update GitHub Release
       if: startsWith(github.ref, 'refs/tags/v') && success()
       uses: softprops/action-gh-release@v2
