@@ -1,8 +1,10 @@
-name: Rust
+name: Rust CI & Release
 
 on:
   push:
     branches: [ "master" ]
+    tags:
+      - 'v*' # 触发 Release 的标签，例如 v1.0.0
   pull_request:
     branches: [ "master" ]
 
@@ -10,32 +12,56 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  # 1. 编译与测试任务（所有 Push 和 PR 都会执行）
+  test:
+    name: Test and Check
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v3
-    - name: Build
-      run: cargo build --release --verbose
-    - name: Run tests
+    - uses: actions/checkout@v4
+
+    # 配置 Rust 工具链
+    - name: Install Rust Toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    # 启用智能缓存，大幅加速后续编译
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Run Check
+      run: cargo check --verbose
+
+    - name: Run Tests
       run: cargo test --verbose
-    - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
+
+  # 2. 发布任务（只有推送 v* 标签时才会执行）
+  release:
+    name: Deploy Release
+    needs: test # 确保测试通过后才执行发布
+    if: startsWith(github.ref, 'refs/tags/v') # 仅在 tag 触发时运行
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 必须显式赋予写权限，否则无法创建 Release
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust Toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    # 编译 Release 版本
+    - name: Build Release
+      run: cargo build --release --verbose
+
+    # 使用现代化的 Action 一键创建 Release 并上传 Asset
+    - name: Update GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        # 自动将 target/release/clock 改名为 clock-linux-amd64 方便辨识
+        files: target/release/clock
+        # 自动根据 commit log 生成 Release 说明（非常省心）
+        generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.sha }}
-        release_name: Release ${{ github.sha }}
-        draft: false
-        prerelease: false
-    - name: Upload Release Asset
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: target/release/clock
-        asset_name: clock
-        asset_content_type: application/octet-stream
