@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "master" ]
     tags:
-      - 'v*' # 触发 Release 的标签，例如 v1.0.0
+      - 'v*'
   pull_request:
     branches: [ "master" ]
 
@@ -12,18 +12,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # 1. 编译与测试任务（所有 Push 和 PR 都会执行）
   test:
     name: Test and Check
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
 
-    # 配置 Rust 工具链
+    # ========== ✨ 新增：安装系统底层图形库依赖 ==========
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libglib2.0-dev libgtk-3-dev libgtk-4-dev
+    # ===================================================
+
     - name: Install Rust Toolchain
       uses: dtolnay/rust-toolchain@stable
 
-    # 启用智能缓存，大幅加速后续编译
     - name: Rust Cache
       uses: Swatinem/rust-cache@v2
 
@@ -33,17 +37,23 @@ jobs:
     - name: Run Tests
       run: cargo test --verbose
 
-  # 2. 发布任务（只有推送 v* 标签时才会执行）
   release:
     name: Deploy Release
-    needs: test # 确保测试通过后才执行发布
-    if: startsWith(github.ref, 'refs/tags/v') # 仅在 tag 触发时运行
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 必须显式赋予写权限，否则无法创建 Release
+      contents: write
     
     steps:
     - uses: actions/checkout@v4
+
+    # ========== ✨ 新增：发布任务里也需要安装同样的依赖 ==========
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libglib2.0-dev libgtk-3-dev libgtk-4-dev
+    # ===================================================
 
     - name: Install Rust Toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -51,17 +61,13 @@ jobs:
     - name: Rust Cache
       uses: Swatinem/rust-cache@v2
 
-    # 编译 Release 版本
     - name: Build Release
       run: cargo build --release --verbose
 
-    # 使用现代化的 Action 一键创建 Release 并上传 Asset
     - name: Update GitHub Release
       uses: softprops/action-gh-release@v2
       with:
-        # 自动将 target/release/clock 改名为 clock-linux-amd64 方便辨识
         files: target/release/clock
-        # 自动根据 commit log 生成 Release 说明（非常省心）
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
